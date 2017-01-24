@@ -10,11 +10,11 @@ import argparse
 caffe.set_mode_cpu()
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--maxIterations', type=int, required=True, dest='maxIterations')
 parser.add_argument('--preTrainedRoot', type=str, required=True, dest='preTrainedRoot')
+parser.add_argument('--imageToFool', type=str, required=True, dest='imageToFool')
 args = vars(parser.parse_args())
 
-maxIterations, preTrainedRoot = args['maxIterations'], args['preTrainedRoot']
+maxIterations, preTrainedRoot, imageToFool = 500, args['preTrainedRoot'], args['imageToFool']
 
 # -----------------------------------------------
 # -----------------------------------------------
@@ -104,11 +104,7 @@ imagenetLabels = pd.read_table("imageNet.labels", header=None)
 googLeNet = loadGoogLeNet()
 caffeTransformer = makeCaffeTransformer()
 
-imageName = "pizza.jpg"
-
-nameInput = "inputImages/" + imageName
-
-#inputImage = caffeTransformer.preprocess('data', caffe.io.load_image("Typhoon3.jpg"))
+nameInput = "inputImages/" + imageToFool
 inputImage = caffeTransformer.preprocess('data', caffe.io.load_image(nameInput))
 predictedClasses = simplePredictor(inputImage)
 
@@ -116,7 +112,7 @@ predictedClasses = simplePredictor(inputImage)
 # Choose the intended result to fool the network
 # -------------------------------------------
 
-intendedOutcome = 30
+intendedOutcome = 963
 intendedLabel = imagenetLabels.loc[intendedOutcome][0]
 print "Intended outcome is: %s" % simplifyLabel(intendedLabel)
 
@@ -139,9 +135,9 @@ assert all(np.array_equal(blob[0], blob[1]) for blob in zip(initialBlobs, finalB
 assert all([np.array_equal(weights[0][0], weights[1][0]) for weights in zip(initialWeights, finalWeights)])
 assert all([np.array_equal(weights[0][1], weights[1][1]) for weights in zip(initialWeights, finalWeights)])
 
-displayPerturbation(inputImage, finalImage, 'outputImages/diff.%s' % imageName)
-displayImage(inputImage, 'outputImages/input.%s' % imageName)
-displayImage(finalImage, 'outputImages/output.%s' % imageName)
+displayPerturbation(inputImage, finalImage, 'outputImages/diff.%s' % imageToFool)
+displayImage(inputImage, 'outputImages/input.%s' % imageToFool)
+displayImage(finalImage, 'outputImages/output.%s' % imageToFool)
 
 '''
 #hist, bin_edges = np.histogram(imageDiff.flatten(), bins = 20)
