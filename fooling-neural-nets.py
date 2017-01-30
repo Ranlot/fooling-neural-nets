@@ -6,15 +6,18 @@ import numpy as np
 from collections import namedtuple
 from itertools import ifilter
 import argparse
+import os
 
 caffe.set_mode_cpu()
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--preTrainedRoot', type=str, required=True, dest='preTrainedRoot')
 parser.add_argument('--imageToFool', type=str, required=True, dest='imageToFool')
+parser.add_argument('--intendedResult', type=int, required=True, dest='intendedResult')
 args = vars(parser.parse_args())
 
-maxIterations, preTrainedRoot, imageToFool = 500, args['preTrainedRoot'], args['imageToFool']
+preTrainedRoot, imageToFool, intendedOutcome = args['preTrainedRoot'], args['imageToFool'], args['intendedResult']
+maxIterations, outputPath  = 500, 'outputImages'
 
 # -----------------------------------------------
 # -----------------------------------------------
@@ -37,7 +40,7 @@ def makeCaffeTransformer():
 
 
 def displayImage(img, imgName):
-    topPredictedClasses = simplePredictor(img)[:2]
+    topPredictedClasses = forwardPassPredictions(img)[:2]
     img = transformImage(img)
     plt.imshow(img)
     plt.title(topPredictedClasses)
@@ -57,44 +60,45 @@ def displayPerturbation(inputImage, finalImage, diffName):
     plt.imshow(reScaledImageDiff)
     plt.savefig(diffName)
 
+
 def simplifyLabel(label):
-	return label.split(',')[0]
+    return label.split(',')[0]
+
 
 def joinPredictLabel(predictedClasses):
     labeledPredictions = [(pred[1], imagenetLabels.loc[pred[0]][0]) for pred in predictedClasses]
-    #return map(lambda x: (round(100 * x[0], 1), x[1].split(',')[0]), labeledPredictions)
     return map(lambda x: (round(100 * x[0], 1), simplifyLabel(x[1])), labeledPredictions)
 
 
-def simplePredictor(inputImage):
-    googLeNet.blobs['data'].data[...] = inputImage
+def forwardPassPredictions(img):
+    googLeNet.blobs['data'].data[...] = img
     outputProb = googLeNet.forward()
     predictedClasses = sorted(enumerate(outputProb['prob'][0]), key=itemgetter(1), reverse=True)
     return joinPredictLabel(predictedClasses)
 
 
-def modifyImage(img):  # Also logs some information into outer list
-    backGradient = googLeNet.backward(prob=desiredProb)['data']
-    newImage = img + np.sign(backGradient) * 0.01
-    allPredictions = simplePredictor(newImage)
-    print allPredictions[:10]
-    mostLikelyPrediction = allPredictions[0]
-    logIntermediatePredictions.append(mostLikelyPrediction)
-    return newImage
+def modifyImage(img):
+    existingPredictions = forwardPassPredictions(img)               # SIDE-EFFECT: updates prob blob because of forward pass
+    lossGradient = googLeNet.backward(prob=desiredProb)['data']     # calculates loss and associated gradients
+    return img + np.sign(lossGradient) * 0.01
 
 
-def deformationGenerator(deformationFunction, currentState):
+def deformationGenerator(deformationFunction, currentImage):
     for _ in range(maxIterations):
-        newState = deformationFunction(currentState)
-        yield newState
-        currentState = newState
+        newImage = deformationFunction(currentImage)
+        yield newImage
+        currentImage = newImage
 
 
-def captureNetworkState():
-    blobs = [googLeNet.blobs[blobs].data for blobs in googLeNet.blobs]
-    weights = [(googLeNet.params[params][0].data, googLeNet.params[params][1].data) for params in googLeNet.params]
-    return blobs, weights
+def captureNetworkWeights():
+    return [(googLeNet.params[params][0].data, googLeNet.params[params][1].data) for params in googLeNet.params]
 
+
+# Also logs some information into outer list
+def constraintSatisfaction(x):
+    prediction = forwardPassPredictions(x)
+    print prediction[:8]
+    return prediction[0][1] == simplifyLabel(intendedLabel) and prediction[0][0] > 80
 
 # -----------------------------------------------
 # -----------------------------------------------
@@ -104,42 +108,28 @@ imagenetLabels = pd.read_table("imageNet.labels", header=None)
 googLeNet = loadGoogLeNet()
 caffeTransformer = makeCaffeTransformer()
 
-nameInput = "inputImages/" + imageToFool
-inputImage = caffeTransformer.preprocess('data', caffe.io.load_image(nameInput))
-predictedClasses = simplePredictor(inputImage)
+inputImage = caffeTransformer.preprocess('data', caffe.io.load_image(imageToFool))
 
-# -------------------------------------------
-# Choose the intended result to fool the network
-# -------------------------------------------
-
-intendedOutcome = 963
 intendedLabel = imagenetLabels.loc[intendedOutcome][0]
 print "Intended outcome is: %s" % simplifyLabel(intendedLabel)
-
 desiredProb = np.zeros_like(googLeNet.blobs['prob'].data)
-desiredProb[0][intendedOutcome] = 1
+desiredProb[0][intendedOutcome] = 1  # set to 1 for the intended outcome
 
-# -------------------------------------------
-
-logIntermediatePredictions = []
 processDeformation = deformationGenerator(modifyImage, inputImage)
 
-initialBlobs, initialWeights = captureNetworkState()
-#TODO: create function for constraint statisfaction
-finalImage = next(ifilter(lambda x: simplePredictor(x)[0][1] == simplifyLabel(intendedLabel) and simplePredictor(x)[0][0] > 80, processDeformation), 'neoir')
-finalBlobs, finalWeights = captureNetworkState()
+initialWeights = captureNetworkWeights()
+finalImage = next(ifilter(constraintSatisfaction, processDeformation), 'neoir')
+finalWeights = captureNetworkWeights()
 
 finalImage = finalImage[0]
 
-assert all(np.array_equal(blob[0], blob[1]) for blob in zip(initialBlobs, finalBlobs))
+# make sure that the network did not change at all
 assert all([np.array_equal(weights[0][0], weights[1][0]) for weights in zip(initialWeights, finalWeights)])
 assert all([np.array_equal(weights[0][1], weights[1][1]) for weights in zip(initialWeights, finalWeights)])
 
-displayPerturbation(inputImage, finalImage, 'outputImages/diff.%s' % imageToFool)
-displayImage(inputImage, 'outputImages/input.%s' % imageToFool)
-displayImage(finalImage, 'outputImages/output.%s' % imageToFool)
+picName = os.path.basename(imageToFool).split('.')[0]
+os.makedirs(os.path.join(outputPath, picName))
 
-'''
-#hist, bin_edges = np.histogram(imageDiff.flatten(), bins = 20)
-#plt.bar(bin_edges[:-1], hist, width = 1, color='g')
-'''
+displayPerturbation(inputImage, finalImage, os.path.join(outputPath, picName, picName + '.diff.jpg'))
+displayImage(inputImage, os.path.join(outputPath, picName, picName + '.input.jpg'))
+displayImage(finalImage, os.path.join(outputPath, picName, picName + '.fooled.jpg'))
