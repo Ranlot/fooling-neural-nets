@@ -7,6 +7,7 @@ from collections import namedtuple
 from itertools import ifilter
 import argparse
 import os
+import shutil
 
 caffe.set_mode_cpu()
 
@@ -98,7 +99,7 @@ def captureNetworkWeights():
 def constraintSatisfaction(x):
     prediction = forwardPassPredictions(x)
     print prediction[:8]
-    return prediction[0][1] == simplifyLabel(intendedLabel) and prediction[0][0] > 80
+    return prediction[0][1] == simplifyLabel(intendedLabel) #and prediction[0][0] > 80
 
 # -----------------------------------------------
 # -----------------------------------------------
@@ -128,8 +129,8 @@ assert all([np.array_equal(weights[0][0], weights[1][0]) for weights in zip(init
 assert all([np.array_equal(weights[0][1], weights[1][1]) for weights in zip(initialWeights, finalWeights)])
 
 picName = os.path.basename(imageToFool).split('.')[0]
-os.makedirs(os.path.join(outputPath, picName))
-
-displayPerturbation(inputImage, finalImage, os.path.join(outputPath, picName, picName + '.diff.jpg'))
-displayImage(inputImage, os.path.join(outputPath, picName, picName + '.input.jpg'))
-displayImage(finalImage, os.path.join(outputPath, picName, picName + '.fooled.jpg'))
+picDir = os.path.join(outputPath, picName)
+[os.remove(os.path.join(picDir, picture)) for picture in os.listdir(picDir) if picture.endswith('.jpg')] if os.path.exists(picDir) else os.makedirs(picDir)
+displayPerturbation(inputImage, finalImage, os.path.join(picDir, picName + '.diff.jpg'))
+displayImage(inputImage, os.path.join(picDir, picName + '.input.jpg'))
+displayImage(finalImage, os.path.join(picDir, picName + '.fooled.jpg'))
